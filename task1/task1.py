@@ -1,4 +1,6 @@
 import torch
+from torch import nn
+from torch.utils.data import TensorDataset, DataLoader
 import numpy as np
 from PIL import Image
 
@@ -35,74 +37,41 @@ def fit_polynomial_ls(x, t, M):
     w_hat = torch.linalg.lstsq(x_powers, t).solution
     return w_hat
 
-
 def fit_polynomial_sgd(x, t, M, learning_rate, minibatch_size):
     """
     Fits a polynomial function using stochastic minibatch gradient descent.
 
     Args:
-        x (torch.Tensor): Input data points of shape (N,).
-        t (torch.Tensor): Target values of shape (N,).
-        M (int): Polynomial degree.
-        learning_rate (float): Learning rate for gradient descent.
-        minibatch_size (int): Size of the minibatch.
+        x (torch.Tensor): Input data points of shape (N, 1)
+        t (torch.Tensor): Target values of shape (N, 1)
+        M (int): Polynomial degree
+        learning_rate (float): Learning rate for gradient descent
+        minibatch_size (int): Size of the minibatch
 
     Returns:
-        w_hat (torch.Tensor): Optimum weight vector of shape (M+1,).
+        w_opt (torch.Tensor): Optimum weight vector of shape (M+1, 1)
     """
-    num_epochs = 100
-    # Initialize weights randomly
-    w = torch.randn(M + 1, requires_grad=True)
-    model = polynomial_fun(w, x)
-    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, momentum=0.9)
-
-    # Main training loop
+    num_epochs = 3000
+    x_powers = torch.pow(x, torch.arange(M+1, dtype=torch.float32))
+    train_data = TensorDataset(x_powers, t)
+    model = nn.Linear(M+1, 1, bias=False, dtype=torch.float32) 
+    mse_loss = nn.MSELoss() 
+    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate) 
+    epochs = []
+    losses = []
+    # Training loop
     for epoch in range(num_epochs):
-
-        optimizer.zero_grad()
-        pred = model.forward(xTr)  # compute model predictions
-        loss = mse_loss(pred, yTr) + reg_param * torch.norm(model.w)
-        loss.backward()  # compute the gradient wrt loss
-        optimizer.step()  # performs a step of gradient descent
-        if (epoch + 1) % print_freq == 0:
-            print('epoch {} loss {}'.format(epoch + 1, loss.item()))
-
-        # Shuffle data
-        indices = torch.randperm(x.size(0))
-        x_shuffled = x[indices]
-        t_shuffled = t[indices]
-        # Mini-batch gradient descent
-        #range = start, stop, step
-        for i in range(0, x.size(0), minibatch_size):
-            x_mb = x_shuffled[i:i + minibatch_size]
-            t_mb = t_shuffled[i:i + minibatch_size]
-            # Forward pass
-            x_mb = x_mb.numpy()
-            w = w.numpy()
-            y_mb = polynomial_fun(x_mb, w)
-            loss = torch.mean((y_mb - t_mb) ** 2)
-            # Backward pass
-            loss.backward()
-            # Update weights
-            with torch.no_grad():
-                w -= learning_rate * w.grad
-            # Zero gradients
-            w.grad.zero_()
-
-        # Print loss periodically
-        if epoch % 10 == 0:
-            print(f"Epoch [{epoch + 1}/{num_epochs}], Loss: {loss.item()}")
-
-    return w.detach()
-
-
-
-        optimizer.zero_grad()
-        pred = model.forward(xTr)  # compute model predictions
-        loss = mse_loss(pred, yTr) + reg_param * torch.norm(model.w)
-        loss.backward()  # compute the gradient wrt loss
-        optimizer.step()  # performs a step of gradient descent
-        if (epoch + 1) % print_freq == 0:
-            print('epoch {} loss {}'.format(epoch + 1, loss.item()))
-
-    return model  # return trained model
+        minibatch_data = DataLoader(train_data, batch_size=minibatch_size, shuffle=True)
+        for x, y in minibatch_data:
+            optimizer.zero_grad()  
+            prediction = model(x)  
+            loss = mse_loss(prediction, y)  
+            loss.backward()  
+            optimizer.step() 
+        epochs.append(epoch)
+        losses.append(loss.item())
+        # Print loss every 10 epochs
+        if (epoch + 1) % 100 == 0:
+            print('Epoch: {} Loss {}'.format(epoch + 1, loss.item()))
+    w_opt = model.weight
+    return w_opt
