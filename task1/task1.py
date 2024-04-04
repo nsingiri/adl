@@ -1,4 +1,3 @@
-#conda activate comp0197-cw1-pt
 import torch
 import numpy as np
 from PIL import Image
@@ -8,69 +7,34 @@ def polynomial_fun(w, x):
     """
     Evaluates a polynomial function given the weight vector w and an input scalar variable x.
     Args:
-        w (list): Weight vector of size M + 1.
-        x (int or float): Input scalar variable.
+        w (torch.Tensor): Weight vector of size (M + 1, 1)
+        x (torch.Tensor): Input scalar variables of size (N, 1)
     Returns:
-        y (int or float): Output value of the polynomial function.
+        y (torch.Tensor): Output value of the polynomial function which has size (N, 1)
     """
-    M = len(w)
-    powers = np.arange(M)
-    y = np.sum(w * np.power(x, powers)) #iterate from m=0 to m=M
+    M = w.shape[0]
+    powers = torch.arange(M, dtype=torch.float32)
+    x_powers = torch.pow(x, powers)
+    y = torch.matmul(x_powers, w)
     return y
-
-# Define polynomial function - PyTorch Version
-# def polynomial_fun(w, x):
-#     """
-#     Evaluates a polynomial function given the weight vector w and an input scalar variable x.
-#     Args:
-#         w (torch.Tensor): Weight vector of size M + 1.
-#         x (int or float): Input scalar variable.
-#     Returns:
-#         y (int or float): Output value of the polynomial function.
-#     """
-#    M = len(w)
-#    return torch.sum(w * (x.unsqueeze(1) ** torch.arange(M, dtype=torch.float32)), dim=1)
 
 
 def fit_polynomial_ls(x, t, M):
+    """ 
+    Implement a least squares solver for fitting polynomial functions using PyTorch's linear algebra modules.
+    
+    Args:
+    - x (torch.Tensor): Input data points of shape (N, 1)
+    - t (torch.Tensor): Target values of shape (N, 1)
+    - M (int): Polynomial degree
+    
+    Returns:
+    - w_hat (torch.Tensor): Optimum weight vector of shape (M+1, 1)
+    """
+    x_powers = torch.pow(x, torch.arange(M+1, dtype=torch.float32))
+    w_hat = torch.linalg.lstsq(x_powers, t).solution
+    return w_hat
 
-
-
-
-
-# def fit_polynomial_ls(x, t, M):
-#     """
-#     Fits a polynomial function using a least square solver.
-#     Args:
-#         x (torch.Tensor): Input data points of shape (N,).
-#         t (torch.Tensor): Target values of shape (N,).
-#         M (int): Polynomial degree.
-#     Returns:
-#         w_opt (torch.Tensor): Optimum weight vector of shape (M+1,).
-#     """
-#     # # Generate the Vandermonde matrix
-#     # X = torch.pow(x.unsqueeze(1), torch.arange(M + 1, dtype=torch.float32))
-#     # # Compute the pseudo-inverse of X
-#     # X_pseudo_inv = torch.linalg.pinv(X)
-#     #
-#     # # Compute the optimal weight vector
-#     # w_hat = torch.matmul(X_pseudo_inv, t)
-#
-#     # return w_hat
-#
-#     X_matrix = torch.tensor(x ** torch.arange(M + 1), dtype=torch.float32)
-#     w_opt, _ = torch.linalg.lstsq(t.unsqueeze(1), X_matrix)
-#     return w_opt.squeeze().numpy()
-#     # w_opt = torch.linalg.lstsq(t.unsqueeze(1), X_matrix)
-#     # return w_opt
-#
-#     sol = torch.linalg.lstsq(X_matrix, )
-
-# ||AX - B||
-# x = A-1B
-# X_sol = func(A, B)
-# linear regression soln --> (XTX)-1XTy
-# minimize ||t - y||^2
 
 def fit_polynomial_sgd(x, t, M, learning_rate, minibatch_size):
     """
