@@ -54,15 +54,15 @@ def fit_polynomial_sgd(x, t, M, learning_rate, minibatch_size):
     """
     num_epochs = 2000
     x_powers = torch.pow(x, torch.arange(M+1, dtype=torch.float32))
-    max_powers = x_powers[-1:]
+    max_powers = (torch.max(torch.abs(x_powers), axis=0)).values
     x_powers = x_powers/max_powers
     train_data = TensorDataset(x_powers, t)
     model = nn.Linear(M+1, 1, bias=False, dtype=torch.float32) 
     mse_loss = nn.MSELoss() 
     optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate, momentum=0.9) 
-    epochs = []
     losses = []
-    # Training loop
+    epochs = []
+    # Training
     for epoch in range(num_epochs):
         minibatch_data = DataLoader(train_data, batch_size=minibatch_size, shuffle=True)
         for x, y in minibatch_data:
