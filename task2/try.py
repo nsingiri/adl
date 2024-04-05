@@ -2,19 +2,34 @@ import torch
 import torchvision
 import torchvision.transforms as transforms
 import torch.optim as optim
+import torch.nn as nn
 from PIL import Image
 import numpy as np
-from mixup import MixUp
+from mixup_class import mixup
 import warnings
 import itertools
 from torch.optim.lr_scheduler import CosineAnnealingLR
   
+device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+
+class Vit(nn.Module):
+    def __init__(self, num_layers=6, patch_size=8, num_heads=8,hidden_dim=384, mlp_dim=1536):
+        super(Vit, self).__init__()
+        self.num_layers = num_layers
+        self.patch_size = patch_size 
+        self.num_heads = num_heads
+        self.hidden_dim = hidden_dim
+        self.mlp_dim = mlp_dim
+        self.model = torchvision.models.vit_b_16(weights='DEFAULT', 
+                                                         progress=True).to(device)
+        
+    def forward(self, x):
+        return self.model(x)
 
 # Main function
 def main():
 
     # Check if GPU is available
-    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
     print("Device:", device)
 
     # CIFAR-10 dataset
@@ -36,8 +51,8 @@ def main():
 
     for x, y in trainloader:
         # Apply MixUp transformation
-        mixup_inst = MixUp(sampling_method=1, alpha=0.5)
-        images, labels = MixUp.mixup(mixup_inst, x, y)
+        mixup_inst = mixup(sampling_method=1, alpha=0.5)
+        images, labels = mixup.mixup_fn(mixup_inst, x, y)
         break  # Exit the loop after the first batch
     labels = torch.argmax(labels, dim=1)
 
@@ -107,20 +122,28 @@ def main():
 
 
     # Load model to GPU
-    model2 = torchvision.models.vit_b_16(weights='DEFAULT').to(device)
+    #model2 = torchvision.models.vit_b_16(weights='DEFAULT').to(device)
+    torch.cuda.empty_cache()
+    model2 = Vit().to(device)
+    model2.num_layers = 4  # Further decrease the number of layers
+    model2.patch_size = 8  # Keep patch size the same
+    model2.hidden_dim = 128  # Decrease hidden dimension further
+    model2.mlp_dim = 512  # Decrease MLP dimension further
+    model2.num_heads = 4 
+
     criterion = torch.nn.CrossEntropyLoss()
     optimizer = optim.Adam(model2.parameters(), lr=0.001)
 
     ## train
-    for epoch in range(2):  
+    for epoch in range(20):  
         running_loss = 0.0
         for i, data in enumerate(trainloader, 0):
             # get the inputs; data is a list of [inputs, labels]
             inputs, labels = data
             # Move input data to GPU
             inputs, labels = inputs.to(device), labels.to(device)
-            mixup_inst = MixUp(sampling_method=2, alpha=0.5)
-            mixed_images, onehot_labels = MixUp.mixup(mixup_inst, x, y)
+            mixup_inst = mixup(sampling_method=2, alpha=0.5)
+            mixed_images, onehot_labels = mixup.mixup_fn(mixup_inst, x, y)
             mixed_labels = torch.argmax(onehot_labels, dim=1)
             # zero the parameter gradients
             optimizer.zero_grad()
@@ -151,7 +174,8 @@ def main():
             test_images = test_images.to(device)
             test_labels = test_labels.to(device)
             test_outputs = model2(test_images)
-            test_predictions = torch.argmax(test_outputs, 1, keepdim=False)
+            # test_predictions = torch.argmax(test_outputs, 1, keepdim=False)
+            _, test_predictions = torch.max(test_outputs, 1)
             accuracy += torch.sum(test_predictions == test_labels)
 
         # Computing and printing testing accuracy

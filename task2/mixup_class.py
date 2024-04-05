@@ -1,7 +1,7 @@
 import torch
 import numpy as np
 
-class MixUp:
+class mixup:
     """
     Data augmentation class that implements the mixup algorithm.
     """
@@ -12,7 +12,7 @@ class MixUp:
         self.alpha = alpha
         self.sampling_method = sampling_method
 
-    def mixup(self, images, labels):
+    def mixup_fn(self, images, labels):
         """
         Implement mixup algorithm.
         """
