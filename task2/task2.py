@@ -1,175 +1,344 @@
+# Import necessary libraries
 import torch
 import torchvision
 import torchvision.transforms as transforms
-import numpy as np
 import torch.optim as optim
 from PIL import Image
+import numpy as np
+from vision2 import SimpleViT
+#from deepvit import DeepViT
+from mixup import mixup
+import warnings
+import itertools
+from torch.optim.lr_scheduler import CosineAnnealingLR
+
+# Suppress the UserWarning related to failed loading of the Python image extension
+warnings.filterwarnings("ignore", message="Failed to load image Python extension*")
+
+# Function to check CUDA memory
+def check_cuda_memory(device_id=0):
+    """
+    Function to check CUDA memory usage on a specified device.
+
+    Parameters:
+    - device_id (int): Index of the CUDA device to be checked (default is 0).
+
+    Prints:
+    - Device Name: Name of the CUDA device.
+    - Total Memory: Total memory of the CUDA device in gigabytes (GB).
+    - Memory Allocated: Memory currently allocated on the CUDA device in GB.
+    - Memory Reserved: Memory reserved on the CUDA device in GB.
+    """
+    # Check if CUDA is available
+    if torch.cuda.is_available():
+        # Get device properties
+        device = torch.device(f'cuda:{device_id}')
+        properties = torch.cuda.get_device_properties(device)
+        
+        # Print device properties
+        print(f'Device Name: {properties.name}')
+        print(f'Total Memory: {properties.total_memory / (1024**3):.2f} GB')
+        
+        # Print memory currently allocated and memory reserved
+        print(f'Memory Allocated: {torch.cuda.memory_allocated(device) / (1024**3):.2f} GB')
+        print(f'Memory Reserved: {torch.cuda.memory_reserved(device) / (1024**3):.2f} GB')
+    else:
+        print('CUDA is not available. Make sure you have installed the necessary drivers.')
 
 
-# set random seed
-torch.manual_seed(21)
+# Main function
+def main():
+    # Checking for GPU and clearing GPU cache
+    torch.cuda.empty_cache()
 
+    # Choosing device (GPU if available, otherwise CPU)
+    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
-class MixUp:
-    """The MixUp class implements the mixup data augmentation algorithm"""
-    def __init__(self, sampling_method):
-        super().__init__()
-        # self.vit.head = nn.Linear(self.vit.head.in_features, num_classes)  # Change the head to output num_classes
-        self.sampling_method = sampling_method
-        self.model = torch.torchvision.models.vit_b_16(weights='DEFAULT')
+    # Setting device and default tensor type based on availability of CUDA
+    if torch.cuda.is_available():
+        torch.cuda.set_device(device)
+        torch.set_default_tensor_type(torch.cuda.FloatTensor if device.type == 'cuda' else torch.FloatTensor)
+    
+    # Setting device to GPU
+    device = 'cuda:0'
+    
+    # Checking CUDA memory usage
+    check_cuda_memory(device_id=0)
+    
+    # Setting device to CPU
+    device = torch.device('cpu')
 
-    def forward(self, x):
-        return self.model(x)
+    # Setting default tensor type to CPU tensor
+    torch.set_default_tensor_type(torch.FloatTensor)
 
-    @staticmethod
-    def mixup(sampling_method, loader1, loader2):
-        # model = torch.torchvision.models.vit_b_16(weights='DEFAULT')
-        if sampling_method == 1:
-            alpha = np.random.uniform(0, 10.0)
-            lam = np.random.beta(alpha, alpha)
-        elif sampling_method == 2:
-            lam = np.random.uniform(0.0, 1.0)
-        for (x1, y1), (x2, y2) in zip(loader1, loader2):
-            x = lam * x1 + (1 - lam) * x2
-            y = lam * y1 + (1 - lam) * y2
-        return x, y
+    # Initializing generator on CPU
+    generator = torch.Generator(device)
+    
+    # Setting seed for reproducibility
+    generator.manual_seed(np.random.randint(0, 1000))
 
+    # CIFAR-10 dataset preprocessing
+    transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+    ])
 
-if __name__ == '__main__':
-    transform = transforms.Compose(
-        [transforms.ToTensor(),
-         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
-
-    batch_size = 16
-
-    trainset = torchvision.datasets.CIFAR10(root='./data', train=True,
-                                            download=True, transform=transform)
-    trainloader = torch.utils.data.DataLoader(trainset, batch_size=batch_size,
-                                              shuffle=True, num_workers=2)
-
-    # Define the size of each subset
-    subset1_size = len(trainset) // 2
-    subset2_size = len(trainset) - subset1_size
-
-    # Split the dataset into two subsets
-    subset1, subset2 = torch.utils.data.random_split(trainset, [subset1_size, subset2_size])
-
-    # Create data loaders for each subset
-    batch_size = 16
-    subset1_loader = torch.utils.data.DataLoader(subset1, batch_size=batch_size, shuffle=True, num_workers=2)
-    subset2_loader = torch.utils.data.DataLoader(subset2, batch_size=batch_size, shuffle=True, num_workers=2)
-
-    testset = torchvision.datasets.CIFAR10(root='./data', train=False,
-                                           download=True, transform=transform)
-    testloader = torch.utils.data.DataLoader(testset, batch_size=batch_size,
-                                             shuffle=False, num_workers=2)
-
+    # Loading CIFAR-10 training set
+    trainset = torchvision.datasets.CIFAR10(root='./data', train=True, download=True, transform=transform)
     classes = ('plane', 'car', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
 
-    # example images
-    # dataiter = iter(trainloader)
-    # images, labels = next(dataiter)
-    mixed_loader = MixUp.mixup(sampling_method=1, loader1=subset1_loader, loader2=subset2_loader)
+    # Loading CIFAR-10 test set
+    testset = torchvision.datasets.CIFAR10(root='./data', train=False, download=True, transform=transform)
+    test_set_size = len(testset)  # Size of testing set
+    test_set_batch_size = 256
+    # Creating DataLoader for test set
+    testloader = torch.utils.data.DataLoader(testset, batch_size=test_set_batch_size, shuffle=False, num_workers=2, generator=generator)
 
-    # Assuming you have already defined or imported the mixed_loader
-    # Assuming batch_size is known
-    batch_size = 16
+    # Hyperparameters grid for grid search
+    hyperparams_grid = {
+        'alpha': [0.4],
+        'learning_rate': [0.0005],
+        'batch_size': [64]
+    }
 
-    # Get a batch of mixed images and labels
-    mixed_data = next(iter(mixed_loader))
-    mixed_images, mixed_labels = mixed_data[0], mixed_data[1]
+    # Generating all combinations of hyperparameters
+    hyperparams_combinations = list(itertools.product(*hyperparams_grid.values()))
+    
+    # Looping through each hyperparameter combination
+    for hyperparams in hyperparams_combinations:
+        # Checking CUDA memory usage
+        check_cuda_memory(device_id=0)
+        
+        # Extracting hyperparameters
+        alpha, learning_rate, batch_size = hyperparams
+        
+        # Creating DataLoader for training set
+        trainloader = torch.utils.data.DataLoader(trainset, batch_size=batch_size, shuffle=True, num_workers=2, generator=generator)
+        
+        # Setting device to GPU
+        device = 'cuda:0'
+        
+        # Creating DataLoader iterator
+        dataiter = iter(trainloader)
+        
+        # Extracting images and labels for a batch
+        images, labels = next(dataiter)
+        
+        # Applying mixup augmentation
+        sampling_method=1
+        Mixer = mixup(alpha, sampling_method)
+        images, _ = Mixer.mix(images, labels)
+        
+        # Saving augmented images
+        im = Image.fromarray((torch.cat(images.split(1, 0), 3).squeeze() / 2 * 255 + .5 * 255).permute(1, 2, 0).numpy().astype('uint8'))
+        im.save("mixup.png")
+        
+        # Clearing memory
+        del trainloader, dataiter, images, im
+        torch.cuda.empty_cache()
+        
+        # Creating DataLoader for training set
+        trainloader = torch.utils.data.DataLoader(trainset, batch_size=batch_size, shuffle=True, num_workers=2, generator=generator)
+        
+        # Initializing SimpleViT model
+        net = SimpleViT(image_size=32, patch_size=4, num_classes=10, dim=256, depth=12, heads=8, mlp_dim=512)
+        print(net)
+        
+        # Moving model to GPU
+        net.to(device)
+        
+        # Defining loss function
+        criterion = torch.nn.MSELoss()
 
-    # Randomly select 16 images from the batch
-    selected_indices = np.random.choice(batch_size, 16, replace=False)
-    selected_images = mixed_images[selected_indices]
-    selected_labels = mixed_labels[selected_indices]
+        # Initializing AdamW optimizer with specified learning rate
+        optimizer = optim.AdamW(net.parameters(), lr=learning_rate)
 
-    # Create a grid of images
-    grid_image = torchvision.utils.make_grid(selected_images, nrow=4)
+        # Maximum number of epochs for training
+        Max_Epochs = 20
 
-    # Convert the grid image to a PIL image
-    pil_image = transforms.ToPILImage()(grid_image)
+        # Setting sampling method for mixup augmentation
+        sampling_method = 1
 
-    # Save the PIL image as a JPEG file
-    pil_image.save("montage.jpg")
+        # Printing start message
+        print("-" * 20 + "start" + "-" * 20)
 
-    # Print the ground truth labels of the selected images
-    print('Ground truth labels: ' + ' '.join('%5s' % classes[selected_labels[j]] for j in range(16)))
+        # Printing information about mixup augmentation and device
+        print("Sampling method 1 (alpha value: " + str(alpha) + ")\nwith pre-trained Vit initialization")
+        print(device)
+
+        # Printing hyperparameters
+        print(alpha, learning_rate, batch_size, Max_Epochs)
+
+        # Looping through epochs for training
+        for epoch in range(Max_Epochs):
+            running_loss = 0.0
+            
+            # Iterating through batches in training loader
+            for i, data in enumerate(trainloader, 0):
+                # Applying mixup augmentation
+                Mixer = mixup(alpha, sampling_method)
+                inputs, labels = data
+                one_hot_labels = torch.nn.functional.one_hot(labels, num_classes=10)
+                inputs = inputs.to(device)
+                one_hot_labels = 1.0 * one_hot_labels.to(device)
+                mixed_inputs, mixed_one_hot_labels = Mixer.mix(inputs, one_hot_labels)
+                
+                # Zeroing gradients
+                optimizer.zero_grad()
+                
+                # Forward pass
+                outputs = net(mixed_inputs)
+                
+                # Calculating loss
+                loss = criterion(outputs, mixed_one_hot_labels)
+                
+                # Backpropagation
+                loss.backward()
+                
+                # Optimizer step
+                optimizer.step()
+
+            # Printing epoch number
+            print("Epoch: " + str(epoch + 1))
+            
+            # Computing testing accuracy
+            accuracy = 0.0
+            for _, test_data in enumerate(testloader, 0):
+                test_images, test_labels = test_data
+                test_images = test_images.to(device)
+                test_labels = test_labels.to(device)
+                test_outputs = net(test_images)
+                test_predictions = torch.argmax(test_outputs, 1, keepdim=False)
+                accuracy += torch.sum(test_predictions == test_labels)
+
+            # Computing and printing testing accuracy
+            accuracy = 100.0 * (accuracy.item()) / (test_set_size)
+            print("Testing accuracy: " + str(accuracy) + "%")
+
+        # Printing completion message after training
+        print('Training done.')
+
+        # Saving trained model
+        torch.save(net.state_dict(), 'sampling_method_one_model.pt')
+        print('Model saved.')
 
 
+    # Setting sampling method for mixup augmentation to 2
+    sampling_method = 2
 
-    # Get the mixed images and labels
-    # dataiter = iter(mixed_loader)
-    # images, labels = next(dataiter)
-    #
-    # # Print the mixed images and their ground truth labels
-    # im = Image.fromarray(
-    #     (torch.cat(images.split(1, 0), 3).squeeze() / 2 * 255 + .5 * 255).permute(1, 2, 0).numpy().astype('uint8'))
-    # im.save("montage.png")
-    #
-    # print('Mixed images saved.')
-    # print('Ground truth labels: ' + ' '.join('%5s' % classes[labels[j]] for j in range(batch_size)))
+    # Printing start message
+    print("-" * 20 + "start" + "-" * 20)
 
-    # Get the mixed images and labels
-    # dataiter = iter(mixed_loader)
-    # images, labels = next(dataiter)
-    #
-    # im = Image.fromarray(
-    #     (torch.cat(images.split(1, 0), 3).squeeze() / 2 * 255 + .5 * 255).permute(1, 2, 0).numpy().astype('uint8'))
-    # im.save("montage.png")
-    # print('train_pt_images.jpg saved.')
-    # print('Ground truth labels:' + ' '.join('%5s' % classes[labels[j]] for j in range(batch_size)))
+    # Printing information about mixup augmentation method and pre-trained ResNet initialization
+    print("Sampling method 2 with pre-trained Vit initialization.\nLamda values sampled uniformly from [0,0.5)")
 
+    # Setting hyperparameters
+    alpha = 0.4
+    learning_rate = 0.0005
+    batch_size = 64
+    Max_Epochs = 20
 
+    # Defining loss function
+    criterion = torch.nn.MSELoss()
 
-    # model = MixUp(sampling_method=1)
-    # criterion = torch.nn.CrossEntropyLoss()
-    # optimizer = optim.SGD(model.parameters(), lr=0.001, momentum=0.9)
-    #
-    #
-    # # Training loop
-    # for epoch in range(2):  # 20 epochs
-    #     running_loss = 0.0
-    #     for i, data in enumerate(trainloader, 0):
-    #         inputs, labels = data
-    #         # inputs, targets_a, targets_b, lam = mixup(inputs, labels)
-    #
-    #         optimizer.zero_grad()
-    #         outputs = net(inputs)
-    #         # loss = criterion(outputs, labels)
-    #         loss = lam * criterion(outputs, targets_a) + (1 - lam) * criterion(outputs, targets_b)
-    #         loss.backward()
-    #         optimizer.step()
-    #
-    #         # Print statistics
-    #         running_loss += loss.item()
-    #         if i % 2000 == 1999:  # Print every 2000 mini-batches
-    #             print('[%d, %5d] loss: %.3f' % (epoch + 1, i + 1, running_loss / 2000))
-    #             running_loss = 0.0
-    #
-    # print('Training done.')
-    # # Save trained model
-    # torch.save(net.state_dict(), 'vit_model.pt')
-    # print('Model saved.')
+    # Initializing SimpleViT model for sampling method 2
+    net2 = SimpleViT(image_size=16, patch_size=4, num_classes=10, dim=256, depth=6, heads=8, mlp_dim=512)
 
-    # def test():
-    #     dataiter = iter(testloader)
-    #     classes = ('plane', 'car', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
-    #
-    #     ## load the trained model
-    #     model = Net()
-    #     model.load_state_dict(torch.load('vit_model.pt'))
-    #
-    #     ## inference
-    #     images, labels = next(dataiter)
-    #     print('Ground-truth: ', ' '.join('%5s' % classes[labels[j]] for j in range(4)))
-    #
-    #     outputs = model(images)
-    #     _, predicted = torch.max(outputs, 1)
-    #     print('Predicted: ', ' '.join('%5s' % classes[predicted[j]] for j in range(4)))
-    #
-    #     # save to images
-    #     im = Image.fromarray(
-    #         (torch.cat(images.split(1, 0), 3).squeeze() / 2 * 255 + .5 * 255).permute(1, 2, 0).numpy().astype('uint8'))
-    #     im.save("test_pt_images.jpg")
-    #     print('test_pt_images.jpg saved.')
+    # Moving model to specified device
+    net2.to(device)
+
+    # Initializing AdamW optimizer for training
+    optimizer = optim.AdamW(net2.parameters(), lr=learning_rate)
+
+    # Looping through epochs for training
+    for epoch in range(Max_Epochs):
+        running_loss = 0.0
+        
+        # Iterating through batches in training loader
+        for i, data in enumerate(trainloader, 0):
+            # Applying mixup augmentation
+            Mixer = mixup(alpha, sampling_method)
+            inputs, labels = data
+            one_hot_labels = torch.nn.functional.one_hot(labels, num_classes=10)
+            inputs = inputs.to(device)
+            one_hot_labels = 1.0 * one_hot_labels.to(device)
+            mixed_inputs, mixed_one_hot_labels = Mixer.mix(inputs, one_hot_labels)
+            
+            # Zeroing gradients
+            optimizer.zero_grad()
+            
+            # Forward pass
+            outputs = net2(mixed_inputs)
+            
+            # Calculating loss
+            loss = criterion(outputs, mixed_one_hot_labels)
+            
+            # Backpropagation
+            loss.backward()
+            
+            # Optimizer step
+            optimizer.step()
+
+        # Printing epoch number and device
+        print("Epoch: " + str(epoch + 1), device)
+        
+        # Computing testing accuracy
+        accuracy = 0.0
+        for _, test_data in enumerate(testloader, 0):
+            test_images, test_labels = test_data
+            test_images = test_images.to(device)
+            test_labels = test_labels.to(device)
+            test_outputs = net2(test_images)
+            test_predictions = torch.argmax(test_outputs, 1, keepdim=False)
+            accuracy += torch.sum(test_predictions == test_labels)
+
+        # Computing and printing testing accuracy
+        accuracy = 100.0 * (accuracy.item()) / (test_set_size)
+        print("Testing accuracy: " + str(accuracy) + "%")
+
+    # Printing completion message after training
+    print('Training done.')
+
+    # Saving trained model
+    torch.save(net2.state_dict(), 'sampling_method_two_model.pt')
+    print('Model saved.')
+
+    # Visualizing results by saving to a PNG file "result.png", a montage of 36 test images with
+# printed messages clearly indicating the ground-truth and the predicted classes for each.
+
+    # Creating DataLoader for test set
+    testloader = torch.utils.data.DataLoader(testset, batch_size=batch_size, shuffle=True, num_workers=2, generator=generator)
+
+    # Creating iterator for test DataLoader
+    dataiter = iter(testloader)
+
+    # Class labels for CIFAR-10 dataset
+    classes = ('plane', 'car', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
+
+    # Inference
+    images, labels = next(dataiter)
+
+    # Save images
+    im = Image.fromarray((torch.cat(images.split(1, 0), 3).squeeze() / 2 * 255 + .5 * 255).permute(1, 2, 0).numpy().astype('uint8'))
+    im.save("result.png")
+
+    # Moving images and labels to specified device
+    images = images.to(device)
+    labels = labels.to(device)
+
+    # Printing ground-truth labels
+    print('Ground-truth:\n', ' '.join('%5s' % classes[labels[j]] for j in range(36)))
+
+    # Forward pass through first network (trained with sampling method 1)
+    outputs = net(images)
+    predicted = torch.argmax(outputs, 1, keepdim=False)
+    print('Predicted by network trained with sampling method 1:\n', ' '.join('%5s' % classes[predicted[j]] for j in range(36)))
+
+    # Forward pass through second network (trained with sampling method 2)
+    outputs = net2(images)
+    predicted = torch.argmax(outputs, 1, keepdim=False)
+    print('Predicted by network trained with sampling method 2:\n', ' '.join('%5s' % classes[predicted[j]] for j in range(36)))
+
+# Main function call
+if __name__ == '__main__':
+    main()
