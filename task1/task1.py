@@ -37,6 +37,7 @@ def fit_polynomial_ls(x, t, M):
     w_hat = torch.linalg.lstsq(x_powers, t).solution
     return w_hat
 
+
 def fit_polynomial_sgd(x, t, M, learning_rate, minibatch_size):
     """
     Fits a polynomial function using stochastic minibatch gradient descent.
@@ -51,12 +52,14 @@ def fit_polynomial_sgd(x, t, M, learning_rate, minibatch_size):
     Returns:
         w_opt (torch.Tensor): Optimum weight vector of shape (M+1, 1)
     """
-    num_epochs = 3000
+    num_epochs = 2000
     x_powers = torch.pow(x, torch.arange(M+1, dtype=torch.float32))
+    max_powers = x_powers[-1:]
+    x_powers = x_powers/max_powers
     train_data = TensorDataset(x_powers, t)
     model = nn.Linear(M+1, 1, bias=False, dtype=torch.float32) 
     mse_loss = nn.MSELoss() 
-    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate) 
+    optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate, momentum=0.9) 
     epochs = []
     losses = []
     # Training loop
@@ -70,8 +73,9 @@ def fit_polynomial_sgd(x, t, M, learning_rate, minibatch_size):
             optimizer.step() 
         epochs.append(epoch)
         losses.append(loss.item())
-        # Print loss every 10 epochs
+        #Print loss every 100 epochs
         if (epoch + 1) % 100 == 0:
             print('Epoch: {} Loss {}'.format(epoch + 1, loss.item()))
-    w_opt = model.weight
-    return w_opt
+    weight = model.weight
+    w_opt = weight / max_powers
+    return w_opt.reshape(M+1, 1)
