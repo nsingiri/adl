@@ -1,7 +1,7 @@
 import torch
 import numpy as np
 
-class MixUp:
+class mixup:
     """
     Data augmentation class that implements the mixup algorithm.
     """
@@ -27,9 +27,7 @@ class MixUp:
         y1, y2 = label, label[index]
         x = lam * x1 + (1 - lam) * x2
         y = lam * y1 + (1 - lam) * y2
-
         return x, y
     
-
 
 
