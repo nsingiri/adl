@@ -1,10 +1,6 @@
 import torch
 from torch import nn
-from torch.utils.data import TensorDataset, DataLoader
-import numpy as np
-from PIL import Image
 import time
-
 from task1 import polynomial_fun, fit_polynomial_ls, fit_polynomial_sgd
 
 
@@ -22,7 +18,7 @@ def compute_rmse(true_values, predicted_values):
 
 
 def main():
-   # Define weight vector
+    # Define weight vector
     w = torch.tensor([1, 2, 3], dtype=torch.float32).reshape(3, 1)
 
     # Generate training set

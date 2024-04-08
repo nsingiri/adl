@@ -3,9 +3,8 @@ import torchvision
 import torchvision.transforms as transforms
 import torch.optim as optim
 from PIL import Image
-# from simple_vit import SimpleViT
-from torch_model import SimpleViT
 from mixup_class import MixUp
+from vit_model import Net
 
 
 # Main function
@@ -24,6 +23,7 @@ def main():
 
     # CIFAR-10 dataset preprocessing
     transform = transforms.Compose([
+        transforms.Resize(size=(224, 224)),
         transforms.ToTensor(),
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
     ])
@@ -58,17 +58,22 @@ def main():
     # Creating DataLoader for training set
     trainloader = torch.utils.data.DataLoader(trainset, batch_size=64, shuffle=True, num_workers=2)
 
-    # SimpleViT model
-    model = SimpleViT(grid_size=32, patch_size=4, num_classes=10, hid_channels=256, depth=12, heads=8, mlp_channels=512).to(device)
-    criterion = torch.nn.MSELoss()
+    # ViT model
+    model = Net().to(device)
+    model.num_layers = 2  
+    model.patch_size = 4  
+    model.hidden_dim = 16  
+    model.mlp_dim = 32  
+    model.num_heads = 4 
+    criterion = torch.nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=0.0001)
 
-    # Sampling Method 1
+    # # Sampling Method 1
     print("Sampling method 1")
     print(device)
 
-    # Shows good performance at 10 epochs 
-    for epoch in range(10):
+    # Shows good performance at 2 epochs 
+    for epoch in range(20):
         for _, data in enumerate(trainloader, 0):
             # Applying mixup augmentation
             Mixer = MixUp(0.5, 1) # alpha = 0.5, sampling_method = 1
@@ -76,10 +81,10 @@ def main():
             inputs = inputs.to(device)
             labels = labels.to(device)
             mixed_inputs, mixed_one_hot_labels = Mixer.mixup_fn(inputs, labels)
-            
+            mixed_labels = torch.argmax(mixed_one_hot_labels, dim=1)
             optimizer.zero_grad()
             outputs = model(mixed_inputs)
-            loss = criterion(outputs, mixed_one_hot_labels)
+            loss = criterion(outputs, mixed_labels)
             loss.backward()
             optimizer.step()
 
@@ -104,7 +109,7 @@ def main():
     print('Training done.')
 
     # Saving trained model
-    torch.save(model.state_dict(), 'sample_method_one_model.pt')
+    torch.save(model.state_dict(), 'method_one_model.pt')
     print('Model one saved.')
 
 
@@ -112,13 +117,19 @@ def main():
     print("Sampling method 2")
     print(device)
 
-    # Initializing SimpleViT model for sampling method 2
-    model2 = SimpleViT(grid_size=16, patch_size=4, num_classes=10, hid_channels=256, depth=6, heads=8, mlp_channels=512).to(device)
-    criterion = torch.nn.MSELoss()
+    # Vit Model
+    model2 = Net().to(device)
+    model2.num_layers = 2  
+    model2.patch_size = 4  
+    model2.hidden_dim = 16  
+    model2.mlp_dim = 32  
+    model2.num_heads = 4
+    model2.heads = torch.nn.Sequential(torch.nn.Linear(in_features=768, out_features=10, bias=True))
+    criterion = torch.nn.CrossEntropyLoss()
     optimizer = optim.Adam(model2.parameters(), lr=0.0001)
 
-    # Shows good performance at 10 epochs
-    for epoch in range(10):
+    # Shows good performance at 2 epochs
+    for epoch in range(20):
         for _, data in enumerate(trainloader, 0):
             # Mixup augmentation
             Mixer = MixUp(0.5, 2) # alpha = 0.5, sampling_method = 2
@@ -126,9 +137,10 @@ def main():
             inputs = inputs.to(device)
             labels = labels.to(device)
             mixed_inputs, mixed_one_hot_labels = Mixer.mixup_fn(inputs, labels)
+            mixed_labels = torch.argmax(mixed_one_hot_labels, dim=1)
             optimizer.zero_grad()
             outputs = model2(mixed_inputs)
-            loss = criterion(outputs, mixed_one_hot_labels)
+            loss = criterion(outputs, mixed_labels)
             loss.backward()
             optimizer.step()
 
@@ -153,7 +165,7 @@ def main():
     print('Training done.')
 
     # Saving trained model
-    torch.save(model2.state_dict(), 'sample_method_two_model.pt')
+    torch.save(model2.state_dict(), 'method_two_model.pt')
     print('Model two saved.')
 
     # Save test images

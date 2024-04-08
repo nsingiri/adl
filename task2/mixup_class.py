@@ -14,7 +14,8 @@ class MixUp:
 
     def mixup_fn(self, images, labels):
         """
-        Implement mixup algorithm.
+        Implement mixup algorithm where images are mixed based on sampling method value to be 
+        either beta or uniform distribution.
         """
         if self.sampling_method == 1:
             lam = np.random.beta(self.alpha, self.alpha)

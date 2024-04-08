@@ -3,7 +3,7 @@ import torchvision
 import torchvision.transforms as transforms
 import torch.optim as optim
 from PIL import Image
-from simple_vit import SimpleViT
+from vit_model import Net
 from mixup_class import MixUp
 import time
 
@@ -40,6 +40,7 @@ def main():
 
     # CIFAR-10 dataset preprocessing
     transform = transforms.Compose([
+        transforms.Resize(size=(224, 224)),
         transforms.ToTensor(),
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
     ])
@@ -69,18 +70,23 @@ def main():
     
     torch.cuda.empty_cache()
 
-    # SimpleViT model
-    model = SimpleViT(grid_size=32, patch_size=4, num_classes=10, hid_channels=256, depth=12, heads=8, mlp_channels=512).to(device)
-    criterion = torch.nn.MSELoss()
+    # ViT model
+    model = Net().to(device)
+    model.num_layers = 2  
+    model.patch_size = 4  
+    model.hidden_dim = 16  
+    model.mlp_dim = 32  
+    model.num_heads = 4 
+    criterion = torch.nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=0.0001)
 
     # Sampling Method 1
     print("Sampling method 1")
     print(device)
 
-    # Shows good performance at 10 epochs 
+    # Shows good performance at 2 epochs 
     model1_start_time = time.time()
-    for epoch in range(10):
+    for epoch in range(20):
         for _, data in enumerate(trainloader, 0):
             # Applying mixup augmentation
             Mixer = MixUp(0.5, 1) # alpha = 0.5, sampling_method = 1
@@ -88,18 +94,18 @@ def main():
             inputs = inputs.to(device)
             labels = labels.to(device)
             mixed_inputs, mixed_one_hot_labels = Mixer.mixup_fn(inputs, labels)
-            
+            mixed_labels = torch.argmax(mixed_one_hot_labels, dim=1)
             optimizer.zero_grad()
             outputs = model(mixed_inputs)
-            loss = criterion(outputs, mixed_one_hot_labels)
+            loss = criterion(outputs, mixed_labels)
             loss.backward()
             optimizer.step()
 
         # Epoch number
         print("Epoch: " + str(epoch + 1))
 
-        v_accuracy = 0.0
-        mse_loss_net1_val=0.0
+        val_accuracy = 0.0
+        val_loss=0.0
         model1_precision = 0.0
         with torch.no_grad():
             for _, validation_data in enumerate(validationloader, 0):
@@ -108,16 +114,16 @@ def main():
                 validation_labels = validation_labels.to(device)
                 validation_outputs = model(validation_images)
                 validation_predictions = torch.argmax(validation_outputs, 1, keepdim=False)
-                v_accuracy += torch.sum(validation_predictions == validation_labels)
+                val_accuracy += torch.sum(validation_predictions == validation_labels)
                 validation_labels_one_hot = torch.nn.functional.one_hot(validation_labels, num_classes=10).float()
-                mse_loss_net1_val += torch.nn.functional.mse_loss(validation_outputs, validation_labels_one_hot.float(), reduction='sum')
+                validation_labels_one_hot = torch.argmax(validation_labels_one_hot, dim=1)
+                val_loss += criterion(validation_outputs, validation_labels_one_hot)
                 model1_precision += compute_precision(validation_labels, validation_predictions)
-            #cross_entropy_net1_val += torch.sum(torch.log(val_softmax_output[torch.arange(val_softmax_output.shape[0]),validation_labels]))
         # Computing and printing testing accuracy
-        v_accuracy = 100.0 * (v_accuracy.item()) / (validation_set_size)
-        print("Validation set accuracy: " + str(v_accuracy) + "%")
-        mse_loss_net1_val = 100.0 * (mse_loss_net1_val.item()) / (validation_set_size)
-        print("Validation set MSE loss: {:.4f}".format(mse_loss_net1_val)+ "%")
+        val_accuracy = 100.0 * (val_accuracy.item()) / (validation_set_size)
+        print("Validation set accuracy: " + str(val_accuracy) + "%")
+        val_loss = 100.0 * (val_loss.item()) / (validation_set_size)
+        print("Validation Loss: {:.4f}".format(val_loss)+ "%")
         model1_precision /= len(validationloader)
         print("Precision: {:.4f}".format(model1_precision))
         
@@ -137,7 +143,7 @@ def main():
 
     model1_time_elapsed =  time.time() - model1_start_time
     # Saving trained model
-    torch.save(model.state_dict(), 'sample_one_task_three.pt')
+    torch.save(model.state_dict(), 'method_one_task_three.pt')
     print('Model saved.')
 
 
@@ -146,14 +152,19 @@ def main():
     print("Sampling method 2")
     print(device)
 
-    # Initializing SimpleViT model for sampling method 2
-    model2 = SimpleViT(grid_size=16, patch_size=4, num_classes=10, hid_channels=256, depth=6, heads=8, mlp_channels=512).to(device)
-    criterion = torch.nn.MSELoss()
+    # Vit Model
+    model2 = Net().to(device)
+    model2.num_layers = 2  
+    model2.patch_size = 4  
+    model2.hidden_dim = 16  
+    model2.mlp_dim = 32  
+    model2.num_heads = 4 
+    criterion = torch.nn.CrossEntropyLoss()
     optimizer = optim.Adam(model2.parameters(), lr=0.0001)
 
-    # Shows good performance at 10 epochs
+    # Shows good performance at 2 epochs
     model2_start_time = time.time()
-    for epoch in range(10):
+    for epoch in range(20):
         for _, data in enumerate(trainloader, 0):
             # Mixup augmentation
             Mixer = MixUp(0.5, 2) # alpha = 0.5, sampling_method = 2
@@ -161,17 +172,18 @@ def main():
             inputs = inputs.to(device)
             labels = labels.to(device)
             mixed_inputs, mixed_one_hot_labels = Mixer.mixup_fn(inputs, labels)
+            mixed_labels = torch.argmax(mixed_one_hot_labels, dim=1)
             optimizer.zero_grad()
             outputs = model2(mixed_inputs)
-            loss = criterion(outputs, mixed_one_hot_labels)
+            loss = criterion(outputs, mixed_labels)
             loss.backward()
             optimizer.step()
 
         # Epoch number
         print("Epoch: " + str(epoch + 1))
 
-        v_accuracy2 = 0.0
-        mse_loss_net2_val=0.0
+        val_accuracy2 = 0.0
+        val_loss_2=0.0
         model2_precision = 0.0
         with torch.no_grad():
           for _, validation_data in enumerate(validationloader, 0):
@@ -180,16 +192,16 @@ def main():
             validation_labels = validation_labels.to(device)
             validation_outputs = model2(validation_images)
             validation_predictions = torch.argmax(validation_outputs, 1, keepdim=False)
-            v_accuracy2 += torch.sum(validation_predictions == validation_labels)
+            val_accuracy2 += torch.sum(validation_predictions == validation_labels)
             validation_labels_one_hot = torch.nn.functional.one_hot(validation_labels, num_classes=10).float()
-            mse_loss_net2_val += torch.nn.functional.mse_loss(validation_outputs, validation_labels_one_hot.float(), reduction='sum')
+            validation_labels_one_hot = torch.argmax(validation_labels_one_hot, dim=1)
+            val_loss_2 += criterion(validation_outputs, validation_labels_one_hot) 
             model2_precision += compute_precision(validation_labels, validation_predictions)
-                #cross_entropy_net1_val += torch.sum(torch.log(val_softmax_output[torch.arange(val_softmax_output.shape[0]),validation_labels]))
         # Computing and printing testing accuracy
-        v_accuracy2 = 100.0 * (v_accuracy2.item()) / (validation_set_size)
-        print("Validation set accuracy: " + str(v_accuracy) + "%")
-        mse_loss_net2_val = 100.0 * (mse_loss_net2_val.item()) / (validation_set_size)
-        print("Validation set MSE loss: {:.4f}".format(mse_loss_net2_val)+ "%")
+        val_accuracy2 = 100.0 * (val_accuracy2.item()) / (validation_set_size)
+        print("Validation set accuracy: " + str(val_accuracy2) + "%")
+        val_loss_2 = 100.0 * (val_loss_2.item()) / (validation_set_size)
+        print("Validation Loss: {:.4f}".format(val_loss_2)+ "%")
         model2_precision /= len(validationloader)
         print("Precision: {:.4f}".format(model2_precision))
         
@@ -209,17 +221,17 @@ def main():
     
     model2_time_elapsed =  time.time() - model2_start_time
     # Saving trained model
-    torch.save(model2.state_dict(), 'sample_two_task_three.pt')
+    torch.save(model2.state_dict(), 'method_two_task_three.pt')
     print('Model 2 saved.')
     
 
-    print("\nSummary of metrics for the networks with sampling method 1 and 2")
-    print(f"{'Metric' : <60}{'Network 1' : <30}{'Network 2' : <30}")
-    print(f"{'Validation Accuracy' : <60}{v_accuracy:.2f}{'%' : <28}{v_accuracy2:.2f}{'%' : <28}")
-    print(f"{'Validation Loss' : <60}{mse_loss_net1_val:.2f}{'%' : <28}{mse_loss_net2_val:.2f}{'%' : <28}")
-    print(f"{'Holdout set Accuracy' : <60}{test_accuracy:.2f}{'%' : <28}{test_accuracy2:.2f}{'%' : <28}")
-    print(f"{'Time to train (seconds)' : <60}{model1_time_elapsed:.2f}{'s' : <28}{model2_time_elapsed:.2f}{'s' : <28}")
-    print(f"{'F1 Score' : <60}{model1_precision:.4f}{' ' : <28}{model2_precision:.4f}")
+    print("\nSummary of validation metrics for the models with sampling method 1 and 2")
+    print('Validation Accuracy (Method 1): {}, Validation Accuracy (Method 2): {}'.format(val_accuracy, val_accuracy2))
+    print('Validation Loss (Method 1): {}, Validation Loss (Method 2): {}'.format(val_loss, val_loss_2))
+    print('Validation Accuracy (Method 1): {}, Validation Accuracy (Method 2): {}'.format(val_accuracy, val_accuracy2))
+    print('Time to train (seconds) - Method 1): {}, Time to train (seconds) - Method 2): {}'.format(model1_time_elapsed, model2_time_elapsed))
+    print('Precision (Method 1): {}, Precision (Method 2): {}'.format(model1_precision, model2_precision))
+    print('Hold out set accuracy (Method 1): {}, Hold out set accuracy (Method 2): {}'.format(test_accuracy, test_accuracy2))
 
 
 # Main function call

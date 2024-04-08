@@ -32,7 +32,7 @@ def fit_polynomial_sgd_weight_regularised(x, t, M, learning_rate, minibatch_size
     Returns:
         w_opt (torch.Tensor): Optimum weight vector of shape (M+1, 1)
     """
-    num_epochs = 2000
+    num_epochs = 5000
     x_powers = torch.pow(x, torch.arange(M+1, dtype=torch.float32))
     max_powers = (torch.max(torch.abs(x_powers), axis=0)).values
     x_powers = x_powers/max_powers
@@ -50,99 +50,72 @@ def fit_polynomial_sgd_weight_regularised(x, t, M, learning_rate, minibatch_size
             optimizer.zero_grad()  
             prediction = model(x)  
             # Regularization term using L2-norm
-            regularisation_term = torch.sum(torch.square(torch.div(model.weight, max_powers)))
-            loss = mse_loss(prediction, y) + alpha * regularisation_term
+            reg_term = torch.sum(torch.square(torch.div(model.weight, max_powers)))
+            loss = mse_loss(prediction, y) + alpha * reg_term
             loss.backward() 
             optimizer.step()  
-
-        # Print loss every 10,000 epochs
-        if epoch % 100 == 0:
+        epochs.append(epoch)
+        losses.append(loss.item())
+        # Print loss every 200 epochs
+        if epoch % 200 == 0:
             # Set weights that are not influential to 0 every 10,000 epochs
             flag = torch.abs(torch.div(model.weight, max_powers)) >= 1e-3
             model.weight.data = model.weight * flag
-            print("Epoch: " + str(epoch) + ", MSE + L2 weight regularization loss: " + str(loss.item()))
+            print('Epoch: {} Loss {}'.format(epoch + 1, loss.item()))
 
-        epochs.append(epoch)
-        losses.append(loss.item())
-
-    print("Epoch: " + str(epoch) + ", MSE + L2 weight regularization loss: " + str(loss.item()))
+    print('End of Training')
+    print('Epoch: {} Loss {}'.format(epoch + 1, loss.item()))
     
     # Set weights to 0 for those not influential
     flag = torch.abs(torch.div(model.weight, max_powers)) >= 1e-3
     model.weight.data = model.weight * flag
-    w_hat = model.weight
-    
-    # Rescale the weight
-    print("-" * 20 + "end" + "-" * 20)
-    w_opt = w_hat / max_powers
-
+    weight = model.weight
+    w_opt = weight / max_powers
     return w_opt.reshape(M+1, 1)
 
 
 def main():
-    
-    #Use polynomial_fun (𝑀 =10, 𝐰=[1,2,3,4,5]T) to generate a training set and a test set, in the 
-    #form of respectively sampled 100 and 50 pairs of 𝑥,𝑥𝜖[−20,20], and 𝑡. The observed 𝑡 values 
-    #are obtained by adding Gaussian noise (standard deviation being 0.2) to 𝑦.
-    
-    temp1 = torch.arange(3, dtype=torch.float32)
-    temp2 = torch.tensor(1, dtype=torch.float32)
-    w = torch.add(temp1, temp2)
-    w = w.reshape(w.shape[0], -1)
-    del temp1, temp2
-    w = torch.tensor([1,2,3,4,5], dtype=torch.float32).reshape(5,1)
 
-    #training set
-    x_train = 40.0*(torch.rand(100, dtype=torch.float32) - 0.5).reshape(100,1)
-    y_train = polynomial_fun(w,x_train)
-    noise_train = (0.2*torch.randn(100, dtype=torch.float32)).reshape(100,1)
-    t_train = y_train+noise_train
-    del noise_train
+    # Define weight vector
+    w = torch.tensor([1, 2, 3], dtype=torch.float32).reshape(3, 1)
 
-    #testing set
-    x_test = 40.0*(torch.rand(50, dtype=torch.float32) - 0.5).reshape(50,1)
-    y_test = polynomial_fun(w,x_test)
-    noise_test = 0.2*torch.randn(50, dtype=torch.float32).reshape(50,1)
+    # Generate training set
+    x_train = 40.0 * (torch.rand(20, dtype=torch.float32) - 0.5).reshape(20, 1)
+    y_train = polynomial_fun(w, x_train)
+    noise_train = (0.5 * torch.randn(20, dtype=torch.float32)).reshape(20, 1)
+    t_train = y_train + noise_train
+
+    # Generate test set
+    x_test = 40.0 * (torch.rand(10, dtype=torch.float32) - 0.5).reshape(10, 1)
+    y_test = polynomial_fun(w, x_test)
+    noise_test = 0.5 * torch.randn(10, dtype=torch.float32).reshape(10, 1)
     t_test = y_test + noise_test
-    del noise_test
 
-    # Report the optimized 𝑀 value and the mean (and standard deviation) in difference between the model-predicted values and the underlying “true” polynomial curve
-    M_max = 10 # Maximum polynomial degree allowed during fitting
-    w_hat_sgd = fit_polynomial_sgd_weight_regularised(x_train, t_train, M_max, 0.5, 25)  # Batch size=25, learning rate = 0.5
-
-    # Print optimized weight vector and optimal polynomial degree
-    print("-" * 40 + "Optimized Results" + "-" * 40)
-    print("Optimized weight vector:")
-    print(w_hat_sgd.tolist())
-    # Find the optimal polynomial degree after training
+    # Find optimized M value
+    M_max = 6 # Max polynomial degree 
+    w_hat_sgd = fit_polynomial_sgd_weight_regularised(x_train, t_train, M_max, 0.1, 10)  # Batch size=10, learning rate = 0.1
     optimal_M = torch.max(torch.nonzero(w_hat_sgd)[:,0])
-    print("\nOptimized degree of the polynomial:", optimal_M.item()+1)
-    print("-" * 87)
+    print("\nOptimized degree:", optimal_M.item()+1)
 
-    # Compute predicted values for both training and testing sets
+    # Predicted values for both training and testing sets
     y_hat_sgd_train = polynomial_fun(w_hat_sgd, x_train)
     y_hat_sgd_test = polynomial_fun(w_hat_sgd, x_test)
 
-    # Compute difference between predicted values and true polynomial for training set
+    # Difference between predicted values and true polynomial for training set
     difference = y_hat_sgd_train - y_train
     std_difference, mean_difference = torch.std_mean(difference)
-    print(". \n" * 5)
-    print("-" * 20 + "Difference between predicted values (on training set) and true polynomial" + "-" * 20)
-    print("Mean difference: ", mean_difference.tolist())
-    print("Standard deviation: ", std_difference.tolist())
-    print("-" * 20 + "end" + "-" * 20)
+    print("Difference between true and predicted values for train set")
+    print("Mean difference (Train): ", mean_difference.tolist())
+    print("Standard deviation (Train): ", std_difference.tolist())
     del difference, std_difference, mean_difference
 
-    # Compute difference between predicted values and true polynomial for testing set
+    # Difference between predicted values and true polynomial for testing set
     difference = y_hat_sgd_test - y_test
     std_difference, mean_difference = torch.std_mean(difference)
-    print(". \n" * 5)
-    print("-" * 20 + "Difference between predicted values (on testing set) and true polynomial" + "-" * 20)
-    print("Mean difference: ", mean_difference.tolist())
-    print("Standard deviation: ", std_difference.tolist())
-    print("-" * 20 + "end" + "-" * 20)
+    print("Difference between true and predicted values for test set")
+    print("Mean difference (Test): ", mean_difference.tolist())
+    print("Standard deviation (Test): ", std_difference.tolist())
     del difference, std_difference, mean_difference
-
 
 
 if __name__=="__main__":
